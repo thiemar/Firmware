@@ -151,11 +151,6 @@ PARAM_DEFINE_INT32(SDLOG_EXT, -1);
 		log_msgs_skipped++; \
 	}
 
-#define LOG_ORB_SUBSCRIBE(_var, _topic) subs.##_var##_sub = orb_subscribe(ORB_ID(##_topic##)); \
-	fds[fdsc_count].fd = subs.##_var##_sub; \
-	fds[fdsc_count].events = POLLIN; \
-	fdsc_count++;
-
 #define MIN(X,Y) ((X) < (Y) ? (X) : (Y))
 
 static bool main_thread_should_exit = false;		/**< Deamon exit flag */
@@ -167,6 +162,8 @@ static const unsigned MAX_NO_LOGFILE = 999;		/**< Maximum number of log files */
 static const int LOG_BUFFER_SIZE_DEFAULT = 8192;
 static const int MAX_WRITE_CHUNK = 512;
 static const int MIN_BYTES_TO_WRITE = 512;
+
+static const unsigned TELEMETRY_STATUS_MAX_LOG = 2;// TELEMETRY_STATUS_ORB_ID_NUM
 
 static bool _extended_logging = false;
 
@@ -813,12 +810,22 @@ int write_parameters(int fd)
 
 bool copy_if_updated(orb_id_t topic, int handle, void *buffer)
 {
-	bool updated;
+	bool updated = false;
 
-	orb_check(handle, &updated);
+	if (handle < 0) {
+		if (OK == orb_exists(topic, 0)) {
+			handle = orb_subscribe(topic);
+			/* copy first data */
+			if (handle >= 0) {
+				orb_copy(topic, handle, buffer);
+			}
+		}
+	} else {
+		orb_check(handle, &updated);
 
-	if (updated) {
-		orb_copy(topic, handle, buffer);
+		if (updated) {
+			orb_copy(topic, handle, buffer);
+		}
 	}
 
 	return updated;
@@ -1109,7 +1116,7 @@ int sdlog2_thread_main(int argc, char *argv[])
 		int esc_sub;
 		int global_vel_sp_sub;
 		int battery_sub;
-		int telemetry_subs[TELEMETRY_STATUS_ORB_ID_NUM];
+		int telemetry_subs[TELEMETRY_STATUS_MAX_LOG];
 		int range_finder_sub;
 		int estimator_status_sub;
 		int tecs_status_sub;
@@ -1121,46 +1128,43 @@ int sdlog2_thread_main(int argc, char *argv[])
 		int mc_att_ctrl_status_sub;
 	} subs;
 
-	subs.cmd_sub = orb_subscribe(ORB_ID(vehicle_command));
-	subs.status_sub = orb_subscribe(ORB_ID(vehicle_status));
-	subs.vtol_status_sub = orb_subscribe(ORB_ID(vtol_vehicle_status));
-	subs.gps_pos_sub = orb_subscribe(ORB_ID(vehicle_gps_position));
-	subs.sensor_sub = orb_subscribe(ORB_ID(sensor_combined));
-	subs.att_sub = orb_subscribe(ORB_ID(vehicle_attitude));
-	subs.att_sp_sub = orb_subscribe(ORB_ID(vehicle_attitude_setpoint));
-	subs.rates_sp_sub = orb_subscribe(ORB_ID(vehicle_rates_setpoint));
-	subs.act_outputs_sub = orb_subscribe(ORB_ID(actuator_outputs));
-	subs.act_controls_sub = orb_subscribe(ORB_ID_VEHICLE_ATTITUDE_CONTROLS);
-	subs.act_controls_1_sub = orb_subscribe(ORB_ID(actuator_controls_1));
-	subs.local_pos_sub = orb_subscribe(ORB_ID(vehicle_local_position));
-	subs.local_pos_sp_sub = orb_subscribe(ORB_ID(vehicle_local_position_setpoint));
-	subs.global_pos_sub = orb_subscribe(ORB_ID(vehicle_global_position));
-	subs.triplet_sub = orb_subscribe(ORB_ID(position_setpoint_triplet));
-	subs.vicon_pos_sub = orb_subscribe(ORB_ID(vehicle_vicon_position));
-	subs.vision_pos_sub = orb_subscribe(ORB_ID(vision_position_estimate));
-	subs.flow_sub = orb_subscribe(ORB_ID(optical_flow));
-	subs.rc_sub = orb_subscribe(ORB_ID(rc_channels));
-	subs.airspeed_sub = orb_subscribe(ORB_ID(airspeed));
-	subs.esc_sub = orb_subscribe(ORB_ID(esc_status));
-	subs.global_vel_sp_sub = orb_subscribe(ORB_ID(vehicle_global_velocity_setpoint));
-	subs.battery_sub = orb_subscribe(ORB_ID(battery_status));
-	subs.range_finder_sub = orb_subscribe(ORB_ID(sensor_range_finder));
-	subs.estimator_status_sub = orb_subscribe(ORB_ID(estimator_status));
-	subs.tecs_status_sub = orb_subscribe(ORB_ID(tecs_status));
-	subs.system_power_sub = orb_subscribe(ORB_ID(system_power));
-	subs.servorail_status_sub = orb_subscribe(ORB_ID(servorail_status));
-	subs.wind_sub = orb_subscribe(ORB_ID(wind_estimate));
-	subs.tsync_sub = orb_subscribe(ORB_ID(time_offset));
-	subs.mc_att_ctrl_status_sub = orb_subscribe(ORB_ID(mc_att_ctrl_status));
-
-	/* we need to rate-limit wind, as we do not need the full update rate */
-	orb_set_interval(subs.wind_sub, 90);
-	subs.encoders_sub = orb_subscribe(ORB_ID(encoders));
+	subs.cmd_sub = -1;
+	subs.status_sub = -1;
+	subs.vtol_status_sub = -1;
+	subs.gps_pos_sub = -1;
+	subs.sensor_sub = -1;
+	subs.att_sub = -1;
+	subs.att_sp_sub = -1;
+	subs.rates_sp_sub = -1;
+	subs.act_outputs_sub = -1;
+	subs.act_controls_sub = -1;
+	subs.act_controls_1_sub = -1;
+	subs.local_pos_sub = -1;
+	subs.local_pos_sp_sub = -1;
+	subs.global_pos_sub = -1;
+	subs.triplet_sub = -1;
+	subs.vicon_pos_sub = -1;
+	subs.vision_pos_sub = -1;
+	subs.flow_sub = -1;
+	subs.rc_sub = -1;
+	subs.airspeed_sub = -1;
+	subs.esc_sub = -1;
+	subs.global_vel_sp_sub = -1;
+	subs.battery_sub = -1;
+	subs.range_finder_sub = -1;
+	subs.estimator_status_sub = -1;
+	subs.tecs_status_sub = -1;
+	subs.system_power_sub = -1;
+	subs.servorail_status_sub = -1;
+	subs.wind_sub = -1;
+	subs.tsync_sub = -1;
+	subs.mc_att_ctrl_status_sub = -1;
+	subs.encoders_sub = -1;
 
 	/* add new topics HERE */
 
 
-	for (int i = 0; i < TELEMETRY_STATUS_ORB_ID_NUM; i++) {
+	for (unsigned i = 0; i < TELEMETRY_STATUS_MAX_LOG; i++) {
 		subs.telemetry_subs[i] = orb_subscribe(telemetry_status_orb_id[i]);
 	}
 
@@ -1748,7 +1752,7 @@ int sdlog2_thread_main(int argc, char *argv[])
 		}
 
 		/* --- TELEMETRY --- */
-		for (int i = 0; i < TELEMETRY_STATUS_ORB_ID_NUM; i++) {
+		for (unsigned i = 0; i < TELEMETRY_STATUS_MAX_LOG; i++) {
 			if (copy_if_updated(telemetry_status_orb_id[i], subs.telemetry_subs[i], &buf.telemetry)) {
 				log_msg.msg_type = LOG_TEL0_MSG + i;
 				log_msg.body.log_TEL.rssi = buf.telemetry.rssi;
